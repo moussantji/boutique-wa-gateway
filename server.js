@@ -44,6 +44,9 @@ function checkToken(req, res, next) {
 }
 
 async function start() {
+    // Au tout premier lancement le dossier n'existe pas encore (ex : CI
+    // avec cache vide) : Baileys planterait en écrivant auth/creds.json.
+    fs.mkdirSync('./auth', { recursive: true });
     const { state, saveCreds } = await useMultiFileAuthState('./auth');
     let version;
     try {
