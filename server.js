@@ -30,6 +30,8 @@ let sock = null;
 let connected = false;
 let lastQr = null;
 let lastQrAt = 0;
+let lastPairing = null;
+let pairingTimer = null;
 
 function checkToken(req, res, next) {
     if (!TOKEN) return next(); // dev local sans token
@@ -70,6 +72,10 @@ async function start() {
         if (connection === 'open') {
             connected = true;
             lastQr = null;
+            if (pairingTimer) {
+                clearInterval(pairingTimer);
+                pairingTimer = null;
+            }
             console.log('WhatsApp connecté, prêt à envoyer les codes OTP.');
         }
         if (connection === 'close') {
@@ -90,17 +96,31 @@ async function start() {
         }
     });
 
-    // Jumelage par code (pratique sur serveur distant sans écran) : le code
-    // s'affiche ici, à saisir dans WhatsApp > Appareils liés > Lier avec un code.
+    // Jumelage par code (pratique sans écran, et code affiché sur /pairing) :
+    // le code expire vite (~1 min) donc on le renouvelle toutes les 90 s
+    // jusqu'à ce que le numéro soit lié. À saisir dans
+    // WhatsApp > Appareils liés > Lier avec un code.
+    async function requestPairing() {
+        if (!PAIR_NUMBER || !sock || sock.authState.creds.registered) return;
+        try {
+            const pairingCode = await sock.requestPairingCode(PAIR_NUMBER);
+            lastPairing = { code: pairingCode, at: Date.now() };
+            console.log(
+                `Code de jumelage pour ${PAIR_NUMBER} : ${pairingCode} (renouvelé auto toutes les 90 s)`,
+            );
+        } catch (e) {
+            console.log('Jumelage par code impossible :', e?.message || e);
+        }
+    }
     if (PAIR_NUMBER && !state.creds.registered) {
-        setTimeout(async () => {
-            try {
-                const pairingCode = await sock.requestPairingCode(PAIR_NUMBER);
-                console.log(`Code de jumelage pour ${PAIR_NUMBER} : ${pairingCode}`);
-            } catch (e) {
-                console.log('Jumelage par code impossible :', e?.message || e);
+        setTimeout(requestPairing, 8000);
+        pairingTimer = setInterval(async () => {
+            if (connected || sock?.authState?.creds?.registered) {
+                if (pairingTimer) clearInterval(pairingTimer);
+                return;
             }
-        }, 8000);
+            await requestPairing();
+        }, 90000);
     }
 }
 
@@ -113,6 +133,23 @@ function toJid(to) {
 
 app.get('/status', (req, res) => {
     res.json({ connected, qrAvailable: !!lastQr });
+});
+
+// Dernier code de jumelage (protégé par token si configuré) : pratique pour
+// le saisir vite depuis le navigateur, sans fouiller les logs.
+app.get('/pairing', (req, res) => {
+    if (TOKEN) {
+        const given = req.query?.token ?? req.headers['x-gateway-token'] ?? '';
+        if (given !== TOKEN) {
+            return res.status(401).json({ error: 'token requis (?token=...)' });
+        }
+    }
+    if (!lastPairing) {
+        return res
+            .status(connected ? 410 : 404)
+            .json({ error: connected ? 'déjà lié' : 'aucun code pour le moment' });
+    }
+    res.json({ code: lastPairing.code, at: lastPairing.at, number: PAIR_NUMBER });
 });
 
 app.get('/qr', async (req, res) => {
