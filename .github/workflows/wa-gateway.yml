@@ -1,0 +1,94 @@
+# Passerelle OTP WhatsApp — pilote automatique 100% gratuit (GitHub Actions).
+#
+# Principe : GitHub relance la passerelle toute seule toutes les 4 h.
+# - La session WhatsApp est conservée entre les relances (cache) : un seul
+#   jumelage au début, jamais de rescan ensuite (sauf dissociation côté WhatsApp).
+# - Le tunnel Cloudflare NOMMÉ garde la même adresse publique en permanence :
+#   rien à changer côté Laravel après le setup.
+# - Repo GitHub OBLIGATOIREMENT PUBLIC (minutes Actions illimitées).
+#   Aucun secret dans le code : tout passe par Secrets/Variables GitHub.
+#
+# Setup complet : voir GITHUB_ACTIONS.md (à côté de ce fichier).
+name: Passerelle OTP WhatsApp (24h/24 gratuit)
+
+on:
+  schedule:
+    # Toutes les 4 h. GitHub peut décaler le démarrage de quelques minutes :
+    # micro-coupure possible entre deux cycles (le bouton « Renvoyer le code »
+    # côté site couvre ce cas).
+    - cron: '7 */4 * * *'
+  # Lancement manuel (utile pour le premier jumelage + les tests).
+  workflow_dispatch:
+
+# Un seul exemplaire à la fois : deux passerelles avec la même session
+# WhatsApp se déconnecteraient mutuellement.
+concurrency:
+  group: wa-gateway
+  cancel-in-progress: true
+
+jobs:
+  passerelle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350 # sous la limite GitHub (6 h par tâche)
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Restaurer la session WhatsApp
+        uses: actions/cache/restore@v4
+        with:
+          path: auth
+          key: wa-auth-v1
+          restore-keys: wa-auth-
+
+      - name: Dépendances
+        run: npm ci --no-audit --no-fund
+
+      - name: Tunnel Cloudflare (adresse fixe)
+        run: |
+          curl -fsSL -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x cloudflared
+          ./cloudflared tunnel --no-autoupdate run --token "${{ secrets.CLOUDFLARE_TOKEN }}" > cloudflared.log 2>&1 &
+          sleep 10
+          grep -Eo 'https://[^ ]+' cloudflared.log | head -3 || true
+
+      - name: Démarrer la passerelle
+        env:
+          PORT: 3001
+          GATEWAY_TOKEN: ${{ secrets.GATEWAY_TOKEN }}
+          PAIR_NUMBER: ${{ vars.PAIR_NUMBER }}
+        run: |
+          nohup node server.js > gateway.log 2>&1 &
+          echo $! > gateway.pid
+          sleep 25
+          echo '--- statut ---'
+          curl -s http://127.0.0.1:3001/status || true
+          echo ''
+          echo '--- fin du log (code de jumelage éventuel ci-dessous) ---'
+          tail -15 gateway.log
+
+      # Cycle chevauchant le cron (4 h) : la prochaine exécution annule
+      # celle-ci via `concurrency` et prend le relais (trou = ~2-5 min de boot).
+      - name: Garder en ligne (~3h55)
+        run: sleep 14100
+
+      - name: Sauvegarder la session WhatsApp
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: auth
+          # Clé unique par exécution (les anciens caches sont purgés auto au-delà de 10 Go).
+          key: wa-auth-v1-${{ github.run_id }}
+
+      - name: Logs (lire le code de jumelage au 1er lancement)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ github.run_number }}
+          path: |
+            gateway.log
+            cloudflared.log

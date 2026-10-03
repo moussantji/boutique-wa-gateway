@@ -1,0 +1,6 @@
+node_modules/
+auth/
+.env
+*.log
+cloudflared
+cloudflared.exe
