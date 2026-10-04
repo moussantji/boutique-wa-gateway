@@ -12,6 +12,7 @@
 // La session est conservée dans ./auth : un seul scan suffit (sauf déconnexion).
 import express from 'express';
 import makeWASocket, {
+    Browsers,
     fetchLatestBaileysVersion,
     useMultiFileAuthState,
 } from '@whiskeysockets/baileys';
@@ -76,11 +77,14 @@ async function start() {
 
     try {
         sock = makeWASocket({
-        auth: state,
-        version,
-        printQRInTerminal: false,
-        browser: ['Boutique OTP', 'Chrome', '1.0'],
-    });
+            auth: state,
+            version,
+            printQRInTerminal: false,
+            // Empreinte d'un vrai WhatsApp Web + pas de signalement « en ligne »
+            // agressif : réduit les révocations de session côté serveur.
+            browser: Browsers.macOS('Chrome'),
+            markOnlineOnConnect: false,
+        });
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('connection.update', (u) => {
