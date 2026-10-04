@@ -73,13 +73,19 @@ jobs:
 
       # Cycle chevauchant le cron (4 h) : la prochaine exécution annule
       # celle-ci via `concurrency` et prend le relais (trou = ~2-5 min de boot).
-      # Sauvegardes régulières : si le numéro est lié en cours de route, la
-      # session est capturée en <40 min et survit aux relances/annulations.
+      # Sauvegarde SEULEMENT si WhatsApp est lié : on ne doit jamais écraser
+      # une bonne session en cache avec un état déconnecté. Si le numéro est
+      # lié en cours de route, la session est capturée en <40 min.
       - name: Garder en ligne (1/4)
         run: sleep 3300
 
+      - name: Vérifier la connexion (1/4)
+        id: check1
+        run: |
+          if curl -sf http://127.0.0.1:3001/status | grep -q '"connected":true'; then echo "ok=true" >> $GITHUB_OUTPUT; else echo "ok=false" >> $GITHUB_OUTPUT; fi
+
       - name: Sauvegarder la session (1/4)
-        if: always()
+        if: always() && steps.check1.outputs.ok == 'true'
         uses: actions/cache/save@v4
         with:
           path: auth
@@ -88,8 +94,13 @@ jobs:
       - name: Garder en ligne (2/4)
         run: sleep 3300
 
+      - name: Vérifier la connexion (2/4)
+        id: check2
+        run: |
+          if curl -sf http://127.0.0.1:3001/status | grep -q '"connected":true'; then echo "ok=true" >> $GITHUB_OUTPUT; else echo "ok=false" >> $GITHUB_OUTPUT; fi
+
       - name: Sauvegarder la session (2/4)
-        if: always()
+        if: always() && steps.check2.outputs.ok == 'true'
         uses: actions/cache/save@v4
         with:
           path: auth
@@ -98,8 +109,13 @@ jobs:
       - name: Garder en ligne (3/4)
         run: sleep 3300
 
+      - name: Vérifier la connexion (3/4)
+        id: check3
+        run: |
+          if curl -sf http://127.0.0.1:3001/status | grep -q '"connected":true'; then echo "ok=true" >> $GITHUB_OUTPUT; else echo "ok=false" >> $GITHUB_OUTPUT; fi
+
       - name: Sauvegarder la session (3/4)
-        if: always()
+        if: always() && steps.check3.outputs.ok == 'true'
         uses: actions/cache/save@v4
         with:
           path: auth
@@ -108,8 +124,13 @@ jobs:
       - name: Garder en ligne (4/4)
         run: sleep 3300
 
+      - name: Vérifier la connexion (finale)
+        id: checkfinal
+        run: |
+          if curl -sf http://127.0.0.1:3001/status | grep -q '"connected":true'; then echo "ok=true" >> $GITHUB_OUTPUT; else echo "ok=false" >> $GITHUB_OUTPUT; fi
+
       - name: Sauvegarder la session WhatsApp
-        if: always()
+        if: always() && steps.checkfinal.outputs.ok == 'true'
         uses: actions/cache/save@v4
         with:
           path: auth

@@ -12,7 +12,6 @@
 // La session est conservée dans ./auth : un seul scan suffit (sauf déconnexion).
 import express from 'express';
 import makeWASocket, {
-    DisconnectReason,
     fetchLatestBaileysVersion,
     useMultiFileAuthState,
 } from '@whiskeysockets/baileys';
@@ -105,18 +104,14 @@ async function start() {
         if (connection === 'close') {
             connected = false;
             const code = lastDisconnect?.error?.output?.statusCode;
-            const loggedOut = code === DisconnectReason.loggedOut;
+            // On ne supprime JAMAIS la session locale : une déconnexion peut être
+            // transitoire, et un re-jumelage écrase les identifiants tout seul.
+            // Supprimer ici + sauvegarder ensuite détruirait définitivement une
+            // session encore valable côté WhatsApp.
             console.log(
-                loggedOut
-                    ? 'Session supprimée côté WhatsApp : supprime ./auth et rescanner le QR.'
-                    : 'Connexion perdue, reconnexion...',
+                `Connexion WhatsApp fermée (code ${code}). Reconnexion dans 5 s... (re-jumelage seulement si WhatsApp l'exige)`,
             );
-            if (loggedOut) {
-                try {
-                    fs.rmSync('./auth', { recursive: true, force: true });
-                } catch {}
-            }
-            setTimeout(start, loggedOut ? 3000 : 5000);
+            setTimeout(start, 5000);
         }
     });
 
