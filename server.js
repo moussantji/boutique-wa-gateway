@@ -50,6 +50,19 @@ let lastQr = null;
 let lastQrAt = 0;
 let lastPairing = null;
 let pairingTimer = null;
+let pairingTimeout = null;
+let closeStreak = 0;
+
+function clearPairingTimers() {
+    if (pairingTimeout) {
+        clearTimeout(pairingTimeout);
+        pairingTimeout = null;
+    }
+    if (pairingTimer) {
+        clearInterval(pairingTimer);
+        pairingTimer = null;
+    }
+}
 
 function checkToken(req, res, next) {
     if (!TOKEN) return next(); // dev local sans token
@@ -65,6 +78,8 @@ async function start() {
     // Au tout premier lancement le dossier n'existe pas encore (ex : CI
     // avec cache vide) : Baileys planterait en écrivant auth/creds.json.
     fs.mkdirSync('./auth', { recursive: true });
+    // Jamais deux jeux de timers en parallèle (sinon spam de codes).
+    clearPairingTimers();
     let state;
     let saveCreds;
     try {
@@ -108,10 +123,8 @@ async function start() {
         if (connection === 'open') {
             connected = true;
             lastQr = null;
-            if (pairingTimer) {
-                clearInterval(pairingTimer);
-                pairingTimer = null;
-            }
+            closeStreak = 0;
+            clearPairingTimers();
             console.log('WhatsApp connecté, prêt à envoyer les codes OTP.');
         }
         if (connection === 'close') {
@@ -121,10 +134,14 @@ async function start() {
             // transitoire, et un re-jumelage écrase les identifiants tout seul.
             // Supprimer ici + sauvegarder ensuite détruirait définitivement une
             // session encore valable côté WhatsApp.
+            // Reconnexion en backoff (5 s → 2 min max) : évite de spammer le
+            // serveur en cas de rejet répété (quarantaine anti-abus).
+            closeStreak += 1;
+            const delay = Math.min(5000 * closeStreak, 120000);
             console.log(
-                `Connexion WhatsApp fermée (code ${code}). Reconnexion dans 5 s... (re-jumelage seulement si WhatsApp l'exige)`,
+                `Connexion WhatsApp fermée (code ${code}). Nouvel essai dans ${Math.round(delay / 1000)} s... (re-jumelage seulement si WhatsApp l'exige)`,
             );
-            setTimeout(start, 5000);
+            setTimeout(start, delay);
         }
     });
 
@@ -145,10 +162,11 @@ async function start() {
         }
     }
     if (PAIR_NUMBER && !state.creds.registered) {
-        setTimeout(requestPairing, 8000);
+        clearPairingTimers();
+        pairingTimeout = setTimeout(requestPairing, 8000);
         pairingTimer = setInterval(async () => {
             if (connected || sock?.authState?.creds?.registered) {
-                if (pairingTimer) clearInterval(pairingTimer);
+                clearPairingTimers();
                 return;
             }
             await requestPairing();
