@@ -23,6 +23,15 @@ const PORT = Number(process.env.PORT || 3001);
 const TOKEN = process.env.GATEWAY_TOKEN || '';
 const PAIR_NUMBER = (process.env.PAIR_NUMBER || '').replace(/\D+/g, '');
 
+// Anti-crash : une erreur interne Baileys/WhatsApp ne doit jamais tuer la
+// passerelle (le job GitHub resterait « vert » avec un service mort).
+process.on('unhandledRejection', (e) => {
+    console.log('Rejet non géré (passerelle maintenue) :', e?.message || e);
+});
+process.on('uncaughtException', (e) => {
+    console.log('Exception non capturée (passerelle maintenue) :', e?.message || e);
+});
+
 const app = express();
 app.use(express.json({ limit: '256kb' }));
 
@@ -47,7 +56,18 @@ async function start() {
     // Au tout premier lancement le dossier n'existe pas encore (ex : CI
     // avec cache vide) : Baileys planterait en écrivant auth/creds.json.
     fs.mkdirSync('./auth', { recursive: true });
-    const { state, saveCreds } = await useMultiFileAuthState('./auth');
+    let state;
+    let saveCreds;
+    try {
+        ({ state, saveCreds } = await useMultiFileAuthState('./auth'));
+    } catch (e) {
+        console.log('Session illisible, on repart de zéro :', e?.message || e);
+        try {
+            fs.rmSync('./auth', { recursive: true, force: true });
+        } catch {}
+        fs.mkdirSync('./auth', { recursive: true });
+        ({ state, saveCreds } = await useMultiFileAuthState('./auth'));
+    }
     let version;
     try {
         ({ version } = await fetchLatestBaileysVersion());
@@ -55,7 +75,8 @@ async function start() {
         version = undefined;
     }
 
-    sock = makeWASocket({
+    try {
+        sock = makeWASocket({
         auth: state,
         version,
         printQRInTerminal: false,
@@ -124,6 +145,10 @@ async function start() {
             }
             await requestPairing();
         }, 90000);
+    }
+    } catch (e) {
+        console.log('Démarrage socket impossible, nouvel essai dans 10 s :', e?.message || e);
+        setTimeout(start, 10000);
     }
 }
 
