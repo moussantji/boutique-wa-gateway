@@ -10,6 +10,9 @@
 //    (+ WHATSAPP_GATEWAY_TOKEN=change-moi)
 //
 // La session est conservée dans ./auth : un seul scan suffit (sauf déconnexion).
+// Lit aussi ./.env s'il existe (mutualisé : plus fiable que les variables
+// d'interface, qui ne sont pas toujours transmises au processus).
+import 'dotenv/config';
 import express from 'express';
 import makeWASocket, {
     Browsers,
