@@ -35,6 +35,12 @@ process.on('uncaughtException', (e) => {
 const app = express();
 app.use(express.json({ limit: '256kb' }));
 
+// Compatibilité hébergement mutualisé (ex : app servie en sous-URI /wa) :
+// les routes existent à la racine ET sous BASE_PATH (ex BASE_PATH=/wa).
+// Laisse vide partout ailleurs (Colab, Actions, VPS, sous-domaine).
+const BASE_PATH = (process.env.BASE_PATH || '').replace(/\/+$/, '');
+const api = express.Router();
+
 let sock = null;
 let connected = false;
 let lastQr = null;
@@ -158,13 +164,13 @@ function toJid(to) {
     return d + '@s.whatsapp.net';
 }
 
-app.get('/status', (req, res) => {
+api.get('/status', (req, res) => {
     res.json({ connected, qrAvailable: !!lastQr });
 });
 
 // Dernier code de jumelage (protégé par token si configuré) : pratique pour
 // le saisir vite depuis le navigateur, sans fouiller les logs.
-app.get('/pairing', (req, res) => {
+api.get('/pairing', (req, res) => {
     if (TOKEN) {
         const given = req.query?.token ?? req.headers['x-gateway-token'] ?? '';
         if (given !== TOKEN) {
@@ -179,7 +185,7 @@ app.get('/pairing', (req, res) => {
     res.json({ code: lastPairing.code, at: lastPairing.at, number: PAIR_NUMBER });
 });
 
-app.get('/qr', async (req, res) => {
+api.get('/qr', async (req, res) => {
     // Le QR permet de lier TON numéro : protégé par token si configuré
     // (utile quand la passerelle est exposée via tunnel, ex Colab).
     if (TOKEN) {
@@ -207,7 +213,7 @@ app.get('/qr', async (req, res) => {
     }
 });
 
-app.post('/send', checkToken, async (req, res) => {
+api.post('/send', checkToken, async (req, res) => {
     const { to, body } = req.body || {};
     if (!to || !body) {
         return res.status(422).json({ sent: false, error: 'to/body requis' });
@@ -222,6 +228,9 @@ app.post('/send', checkToken, async (req, res) => {
         res.status(502).json({ sent: false, error: String(e?.message || e) });
     }
 });
+
+app.use(api);
+if (BASE_PATH) app.use(BASE_PATH, api);
 
 app.listen(PORT, () => {
     console.log(`Passerelle OTP : http://localhost:${PORT}  (/status, /qr, POST /send)`);
