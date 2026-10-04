@@ -21,6 +21,12 @@ import makeWASocket, {
 } from '@whiskeysockets/baileys';
 import QRCode from 'qrcode';
 import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// Dossier de session en chemin ABSOLU (le répertoire courant est imprévisible
+// sous Passenger/mutualisé : relatif planterait ou écrirait ailleurs).
+const AUTH_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'auth');
 
 const PORT = Number(process.env.PORT || 3001);
 const TOKEN = process.env.GATEWAY_TOKEN || '';
@@ -77,20 +83,21 @@ function checkToken(req, res, next) {
 async function start() {
     // Au tout premier lancement le dossier n'existe pas encore (ex : CI
     // avec cache vide) : Baileys planterait en écrivant auth/creds.json.
-    fs.mkdirSync('./auth', { recursive: true });
+    fs.mkdirSync(AUTH_DIR, { recursive: true });
+    console.log(`Session WhatsApp : ${AUTH_DIR} (cwd=${process.cwd()})`);
     // Jamais deux jeux de timers en parallèle (sinon spam de codes).
     clearPairingTimers();
     let state;
     let saveCreds;
     try {
-        ({ state, saveCreds } = await useMultiFileAuthState('./auth'));
+        ({ state, saveCreds } = await useMultiFileAuthState(AUTH_DIR));
     } catch (e) {
         console.log('Session illisible, on repart de zéro :', e?.message || e);
         try {
-            fs.rmSync('./auth', { recursive: true, force: true });
+            fs.rmSync(AUTH_DIR, { recursive: true, force: true });
         } catch {}
-        fs.mkdirSync('./auth', { recursive: true });
-        ({ state, saveCreds } = await useMultiFileAuthState('./auth'));
+        fs.mkdirSync(AUTH_DIR, { recursive: true });
+        ({ state, saveCreds } = await useMultiFileAuthState(AUTH_DIR));
     }
     let version;
     try {
